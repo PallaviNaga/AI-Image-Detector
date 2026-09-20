@@ -1,0 +1,12 @@
+﻿streamlit==1.64.0
+torch==2.14.0
+torchvision==0.29.0
+numpy
+pandas
+Pillow
+scipy
+scikit-learn==1.7.2
+joblib
+matplotlib
+opencv-python-headless
+reportlab
