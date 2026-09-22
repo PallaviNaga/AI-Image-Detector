@@ -135,10 +135,44 @@ def generate_forensic_report(
     """
     result = _dictionary(analysis_result)
 
-    cnn = _dictionary(result.get("cnn"))
-    fft = _dictionary(result.get("fft"))
+    # app.py stores CNN and FFT results inside analysis_result["models"].
+    # Keep top-level fallbacks for compatibility with older saved results.
+    models = _dictionary(result.get("models"))
+    cnn = _dictionary(models.get("cnn") or result.get("cnn"))
+    fft = _dictionary(models.get("fft") or result.get("fft"))
     metadata = _dictionary(result.get("metadata"))
     fusion = _dictionary(result.get("fusion"))
+    gradcam = _dictionary(result.get("gradcam"))
+
+    gradcam_overlay = _first_value(
+        gradcam,
+        ["overlay_image", "overlay", "gradcam_overlay"],
+        None,
+    )
+
+    strong_influence_image = _first_value(
+        gradcam,
+        ["strong_influence_image", "focused_overlay", "highlighted_image"],
+        None,
+    )
+
+    strong_influence_percentile = _first_value(
+        gradcam,
+        ["strong_influence_percentile"],
+        80,
+    )
+
+    gradcam_label = _first_value(
+        gradcam,
+        ["explained_label", "prediction", "label"],
+        cnn_label if "cnn_label" in locals() else "Not available",
+    )
+
+    gradcam_ai_probability = _first_value(
+        gradcam,
+        ["ai_probability", "ai_prob"],
+        None,
+    )
 
     # Support applications where the fusion fields are at the top level.
     final_ai_probability = _first_value(
@@ -249,6 +283,13 @@ def generate_forensic_report(
         ["model", "model_name"],
         "ResNet18",
     )
+
+    # Use the CNN label as a fallback once it has been resolved.
+    if gradcam_label == "Not available":
+        gradcam_label = cnn_label
+
+    if gradcam_ai_probability is None:
+        gradcam_ai_probability = cnn_ai_probability
 
     fft_ai_probability = _first_value(
         fft,
@@ -606,6 +647,162 @@ def generate_forensic_report(
     )
 
     story.append(model_table)
+
+    # ---------------------------------------------------------
+    # CNN VISUAL EXPLANATION — GRAD-CAM
+    # ---------------------------------------------------------
+    story.append(PageBreak())
+    story.append(
+        Paragraph(
+            "CNN Visual Explanation — Grad-CAM",
+            styles["SectionHeading"],
+        )
+    )
+
+    if gradcam_overlay is not None or strong_influence_image is not None:
+        try:
+            visual_cells = []
+
+            for title, visual in (
+                ("Complete Grad-CAM overlay", gradcam_overlay),
+                ("Strongest CNN influence", strong_influence_image),
+            ):
+                if visual is None:
+                    continue
+
+                visual_buffer, visual_width, visual_height = _prepare_image(
+                    visual,
+                    maximum_size=(900, 700),
+                )
+                maximum_width = 3.25 * inch
+                maximum_height = 3.7 * inch
+                visual_scale = min(
+                    maximum_width / visual_width,
+                    maximum_height / visual_height,
+                )
+                report_visual = ReportLabImage(
+                    visual_buffer,
+                    width=visual_width * visual_scale,
+                    height=visual_height * visual_scale,
+                )
+                visual_cells.append(
+                    [
+                        Paragraph(f"<b>{title}</b>", styles["BodyText"]),
+                        report_visual,
+                    ]
+                )
+
+            # Each item becomes a column containing its title and image.
+            visual_table = Table(
+                [
+                    [cell[0] for cell in visual_cells],
+                    [cell[1] for cell in visual_cells],
+                ],
+                colWidths=[6.6 * inch / len(visual_cells)] * len(visual_cells),
+            )
+            visual_table.setStyle(
+                TableStyle(
+                    [
+                        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("BOTTOMPADDING", (0, 0), (-1, 0), 7),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ]
+                )
+            )
+            story.append(visual_table)
+            story.append(Spacer(1, 10))
+
+            gradcam_rows = [
+                ["CNN class explained", str(gradcam_label)],
+            ]
+
+            if gradcam_ai_probability is not None:
+                gradcam_rows.append(
+                    [
+                        "CNN AI probability",
+                        _percentage(gradcam_ai_probability),
+                    ]
+                )
+
+            gradcam_table = Table(
+                gradcam_rows,
+                colWidths=[2.1 * inch, 4.7 * inch],
+            )
+
+            gradcam_table.setStyle(
+                TableStyle(
+                    [
+                        (
+                            "BACKGROUND",
+                            (0, 0),
+                            (0, -1),
+                            colors.HexColor("#E5E7EB"),
+                        ),
+                        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                        ("FONTSIZE", (0, 0), (-1, -1), 9),
+                        (
+                            "GRID",
+                            (0, 0),
+                            (-1, -1),
+                            0.5,
+                            colors.HexColor("#CBD5E1"),
+                        ),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 7),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+                        ("TOPPADDING", (0, 0), (-1, -1), 7),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                    ]
+                )
+            )
+
+            story.append(gradcam_table)
+            story.append(Spacer(1, 10))
+            story.append(
+                Paragraph(
+                    "<b>Heatmap interpretation:</b> Red and yellow regions "
+                    "had the strongest influence on the CNN prediction, green "
+                    "regions had moderate influence, and blue regions had "
+                    "weaker influence.",
+                    styles["BodyText"],
+                )
+            )
+            story.append(Spacer(1, 7))
+            story.append(
+                Paragraph(
+                    "<b>Focused highlight:</b> The red outlined view emphasizes "
+                    f"approximately the top {100 - _safe_number(strong_influence_percentile):.0f}% "
+                    "of positive Grad-CAM activation, making the CNN's strongest "
+                    "influence area easier to inspect.",
+                    styles["BodyText"],
+                )
+            )
+            story.append(Spacer(1, 7))
+            story.append(
+                Paragraph(
+                    "<b>Important:</b> The highlighted regions show CNN model "
+                    "attention. They do not independently prove that a specific "
+                    "part of the image was generated or edited by AI.",
+                    styles["Disclaimer"],
+                )
+            )
+
+        except Exception:
+            story.append(
+                Paragraph(
+                    "The Grad-CAM overlay could not be embedded in the PDF.",
+                    styles["BodyText"],
+                )
+            )
+    else:
+        story.append(
+            Paragraph(
+                "Grad-CAM overlay was unavailable for this analysis.",
+                styles["BodyText"],
+            )
+        )
+
     story.append(PageBreak())
 
     story.append(

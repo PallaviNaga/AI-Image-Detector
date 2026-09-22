@@ -464,7 +464,7 @@ st.divider()
 st.header("CNN Explainability — Grad-CAM")
 
 if gradcam_result:
-    original_column, overlay_column = st.columns(2)
+    original_column, overlay_column, strong_column = st.columns(3)
 
     with original_column:
         st.subheader("Original Image")
@@ -495,6 +495,27 @@ if gradcam_result:
                 "Grad-CAM overlay is unavailable."
             )
 
+    with strong_column:
+        st.subheader("Strongest Influence")
+
+        strong_influence_image = gradcam_result.get(
+            "strong_influence_image"
+        )
+
+        if strong_influence_image is not None:
+            st.image(
+                strong_influence_image,
+                caption=(
+                    "The top 20% of positive Grad-CAM activation is "
+                    "emphasized in red and outlined."
+                ),
+                width="stretch",
+            )
+        else:
+            st.warning(
+                "Strong-influence visualization is unavailable."
+            )
+
     explained_label = gradcam_result.get(
         "explained_label",
         gradcam_result.get(
@@ -521,8 +542,10 @@ if gradcam_result:
     st.info(
         "Grad-CAM highlights regions that influenced the CNN. "
         "Red and yellow indicate stronger influence, while blue "
-        "indicates weaker influence. The heatmap does not "
-        "independently prove image origin."
+        "indicates weaker influence. The Strongest Influence view "
+        "emphasizes the top 20% of positive activation. These regions "
+        "are CNN attention areas, not proven AI-generated or edited "
+        "parts of the image."
     )
 
 else:
@@ -791,8 +814,8 @@ try:
 
     st.caption(
         "The PDF includes the final result, uploaded image, "
-        "CNN and FFT scores, Grad-CAM overlay, frequency "
-        "features, metadata, and forensic observations."
+        "CNN and FFT scores, Grad-CAM overlay, strongest CNN-influence "
+        "view, frequency features, metadata, and forensic observations."
     )
 
 except Exception as report_error:
